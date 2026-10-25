@@ -17,6 +17,10 @@ int main(int argc, char *argv[])
         "             border-radius: 5px; padding: 8px 16px; font-size: 14px; }"
         "QPushButton:hover { background-color: #16213e; }"
         "QPushButton:pressed { background-color: #4fc3f7; }"
+        // Day163:状态栏定妆(默认继承深底灰字看不清 → 亮青字加粗)
+        "QStatusBar { background-color: #0d1b2a; color: #00E5FF;"
+        "            font-size: 13px; font-weight: bold;"
+        "            border-top: 1px solid #4fc3f7; }"
         );
 
     MainWindow w;

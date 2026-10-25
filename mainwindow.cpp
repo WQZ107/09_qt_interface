@@ -9,6 +9,9 @@
 #include <QDebug>
 #include <QDateEdit>
 #include <QTableWidget>
+#include <QTcpSocket>           /* ★Day163:TCP 实时通道 */
+#include <QJsonDocument>
+#include <QJsonObject>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -17,7 +20,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
 
     this->resize(900, 520);
-    this->setWindowTitle("车载监控 v0.8");
+    this->setWindowTitle("车载监控 v0.9.1·TCP实时");
 
     tabs = new QTabWidget;
     tabs->addTab(createRealtimePage(), "实时监控");
@@ -36,6 +39,8 @@ MainWindow::MainWindow(QWidget *parent)
         checkAlert();
     });
     refreshTimer->start(1000);
+
+    connectToBoard();     /* ★Day163:TCP 实时通道上线 */
 }
 
 // ── 实时页(原样)──
@@ -90,7 +95,7 @@ QWidget* MainWindow::createRealtimePage()
     return page;
 }
 
-// ── 历史页(★本次重写:官方 addAxis/attachAxis + 自证日志)──
+// ── 历史页(原样)──
 QWidget* MainWindow::createHistoryPage()
 {
     QWidget *page = new QWidget;
@@ -217,10 +222,15 @@ void MainWindow::initChart()
     mainLayout->addWidget(chartView);
 }
 
-// ── 每秒刷新(原样)──
+// ── 每秒刷新(★Day163 加两行:TCP 在喂时让位)──
 void MainWindow::refreshRealtime()
 {
-    DbManager::instance().ensureOpen();
+    DbManager::instance().ensureOpen();   /* 照常做:文件被 mv 换过要重开,
+                                             checkAlert() 的告警查询也靠这条连接 */
+
+    if (tcpConnected)
+        return;   /* TCP 在喂(秒级新鲜),库副本旧约 1 分钟,标签/曲线不打架;
+                     告警在 checkAlert() 里不受影响;TCP 断线自动回退到下面走库 */
 
     double lat, lon, speed, temp, humi, pitch, roll, dist;
     int sat, alert;
@@ -275,6 +285,88 @@ void MainWindow::checkAlert()
                                  QString("类型: %1\n详情: %2").arg(type, detail),
                                  QMessageBox::Ok);
         }
+    }
+}
+
+// ── ★Day163 v0.9.1:TCP 实时通道(重连补洞版)──
+void MainWindow::connectToBoard()
+{
+    /* 防双触发闸:disconnected 和 errorOccurred 可能先后都来,
+       闸门保证 3 秒重试只排一次(DbManager 单例同款:函数内 static 程序级唯一) */
+    static bool retryScheduled = false;
+    retryScheduled = false;
+
+    tcpSocket = new QTcpSocket(this);
+
+    /* 数据到了(QIODevice 的信号,和 QTimer::timeout 同族:事件驱动,不轮询) */
+    connect(tcpSocket, &QTcpSocket::readyRead, this, &MainWindow::onTcpData);
+
+    connect(tcpSocket, &QTcpSocket::connected, this, [=](){
+        tcpConnected = true;
+        statusBar()->showMessage("TCP 实时通道已连接(每秒刷新)");
+    });
+
+    /* 路1:连上之后断开(板子程序死了/拔网线) */
+    connect(tcpSocket, &QTcpSocket::disconnected, this, [=](){
+        tcpConnected = false;
+        if (!retryScheduled) {
+            retryScheduled = true;
+            statusBar()->showMessage("板子断开,3秒后重连...(期间回退数据库刷新)");
+            QTimer::singleShot(3000, this, &MainWindow::connectToBoard);
+        }
+    });
+
+    /* 路2(v0.9.1 补洞):连接被拒不发 disconnected,只发 errorOccurred——
+       板子起得比 3 秒慢时,靠这条路把重试链续上 */
+    connect(tcpSocket, &QAbstractSocket::errorOccurred, this,
+            [=](QAbstractSocket::SocketError){
+        if (tcpConnected)
+            return;                    /* 已连接期间的错误走上面的 disconnected 路 */
+        if (!retryScheduled) {
+            retryScheduled = true;
+            statusBar()->showMessage("板子没连上,3秒后重试...(期间回退数据库刷新)");
+            QTimer::singleShot(3000, this, &MainWindow::connectToBoard);
+        }
+    });
+
+    tcpSocket->connectToHost("192.168.1.100", 9000);
+}
+
+void MainWindow::onTcpData()
+{
+    /* canReadLine:凑齐一整行(\n 结尾)才读——JSON 按行切,半行不解析 */
+    while (tcpSocket->canReadLine()) {
+        QByteArray line = tcpSocket->readLine();
+        QJsonDocument doc = QJsonDocument::fromJson(line);
+        if (!doc.isObject())
+            continue;                      /* 坏行丢弃,下一秒会有新行 */
+
+        QJsonObject o = doc.object();
+        double lat   = o["lat"].toDouble();
+        double lon   = o["lon"].toDouble();
+        double spd   = o["spd"].toDouble();
+        double temp  = o["temp"].toDouble();
+        double humi  = o["humi"].toDouble();
+        double pitch = o["P"].toDouble();
+        double roll  = o["R"].toDouble();
+        double dist  = o["dist"].toDouble();
+        int    sat   = o["sat"].toInt();
+
+        lblLat->setText(QString("纬度: %1").arg(lat, 0, 'f', 6));
+        lblLon->setText(QString("经度: %1").arg(lon, 0, 'f', 6));
+        lblSat->setText(QString("卫星: %1").arg(sat));
+        lblSpeed->setText(QString("速度: %1 km/h").arg(spd, 0, 'f', 0));
+        lblTemp->setText(QString("温度: %1 °C").arg(temp, 0, 'f', 1));
+        lblHumi->setText(QString("湿度: %1 %").arg(humi, 0, 'f', 1));
+        lblPitch->setText(QString("俯仰: %1°").arg(pitch, 0, 'f', 1));
+        lblRoll->setText(QString("横滚: %1°").arg(roll, 0, 'f', 1));
+        lblDist->setText(QString("距离: %1 mm").arg(dist, 0, 'f', 0));
+
+        /* 曲线吃 TCP(和走库时同一套滑动窗口,断线回退无缝衔接) */
+        tempSeries->append(x_counter++, temp);
+        if (tempSeries->count() > 60)
+            tempSeries->remove(0);
+        tempChart->axisX()->setRange(qMax(0, x_counter - 59), x_counter);
     }
 }
 
