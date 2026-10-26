@@ -168,10 +168,20 @@ QWidget* MainWindow::createHistoryPage()
         int row = 0;
         QDateTime tFirst, tLast;
         while (query.next()) {
-            table->insertRow(row);
-            for (int col = 0; col < 12; col++)
-                table->setItem(row, col,
-                               new QTableWidgetItem(query.value(col).toString()));
+                        table->insertRow(row);
+            for (int col = 0; col < 12; col++) {
+                QVariant v = query.value(col);
+                QString text;
+                switch (col) {                       // 按列定妆:12 列各有各的精度
+                case 0:  text = v.toString();                          break;  // 时间:原样
+                case 1:  case 2:  text = QString::number(v.toDouble(), 'f', 6); break;  // 经/纬度:6 位
+                case 3:  case 9:  text = QString::number(v.toDouble(), 'f', 0); break;  // 速度/距离:整数
+                case 4:           text = QString::number(v.toDouble(), 'f', 2); break;  // 加速度:2 位
+                case 10: case 11: text = QString::number(v.toInt());            break;  // 卫星/告警:整数
+                default:          text = QString::number(v.toDouble(), 'f', 1); break;  // 温湿度/俯仰横滚:1 位
+                }
+                table->setItem(row, col, new QTableWidgetItem(text));
+            }
 
             QDateTime t = QDateTime::fromString(
                 query.value(0).toString(), "yyyy-MM-dd hh:mm:ss");
