@@ -9,7 +9,7 @@ int main(int argc, char *argv[])
     // 全局暗色主题(Qt 版 CSS,整车载风格,直接抄)
     a.setStyleSheet(
         "QMainWindow { background-color: #1a1a2e; }"
-        "QLabel { color: #e0e0e0; }"
+        "QLabel { color: #1a1a1a; }"
         "QGroupBox { color: #4fc3f7; border: 1px solid #4fc3f7;"
         "            border-radius: 8px; margin-top: 10px; padding-top: 10px; }"
         "QGroupBox::title { subcontrol-origin: margin; left: 15px; }"
