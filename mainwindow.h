@@ -57,5 +57,6 @@ private:
     QTcpSocket *tcpSocket;
     bool tcpConnected = false;  /* true=标签/曲线吃 TCP(秒级新鲜);false=回退数据库(分钟级) */
     qint64 lastTcpMs = 0;       /* v0.9.2: 最近一次收到数据的毫秒时刻(收数超时判活用) */
+    int lastEvSeq = -1;         /* v0.9.3: 事件序号(-1=未对齐,首包静默对齐) */
 };
 #endif // MAINWINDOW_H

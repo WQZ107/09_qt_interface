@@ -20,7 +20,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
 
     this->resize(900, 520);
-    this->setWindowTitle("车载监控 v0.9.2·TCP实时");
+    this->setWindowTitle("车载监控 v0.9.3·TCP实时");
 
     tabs = new QTabWidget;
     tabs->addTab(createRealtimePage(), "实时监控");
@@ -292,6 +292,10 @@ void MainWindow::checkAlert()
 
         if (id != last_alert_id) {
             last_alert_id = id;
+            if (tcpConnected) {
+                qDebug() << "[ALERT] TCP 在线,DB 事件仅记账(实时路已弹过)";
+                return;
+            }
             QString type   = query.value(1).toString();
             QString detail = query.value(2).toString();
 
@@ -370,6 +374,30 @@ void MainWindow::onTcpData()
         double roll  = o["R"].toDouble();
         double dist  = o["dist"].toDouble();
         int    sat   = o["sat"].toInt();
+        int evSeq  = o["ev_seq"].toInt();
+        int evType = o["ev_type"].toInt();
+        int evVal  = o["ev_val"].toInt();
+        int evP10  = o["ev_p10"].toInt();
+
+        if (lastEvSeq < 0) {
+            lastEvSeq = evSeq;              /* v0.9.3: 冷启动对齐,历史事件不弹 */
+        } else if (evSeq != lastEvSeq) {
+            lastEvSeq = evSeq;
+            if (evType >= 1 && evType <= 3) {   /* type=0=板端重启 seq 归零,不算事件 */
+                QString type, detail;
+                if (evType == 1)      { type = "急刹"; detail = QString("%1g").arg(evVal / 100.0, 0, 'f', 2); }
+                else if (evType == 2) { type = "侧翻"; detail = QString("P=%1 R=%2").arg(evP10 / 10.0, 0, 'f', 1).arg(evVal / 10.0, 0, 'f', 1); }
+                else                  { type = "防撞"; detail = QString("dist=%1mm").arg(evVal); }
+
+                lblAlert->setText("[!] 告警: " + type + " " + detail);
+                lblAlert->setStyleSheet("color: red; font-size: 16px; font-weight: bold;");
+
+                QMessageBox *mb = new QMessageBox(QMessageBox::Warning, "车辆告警",
+                                                  QString("类型: %1\n详情: %2").arg(type, detail), QMessageBox::Ok, this);
+                mb->setAttribute(Qt::WA_DeleteOnClose);
+                mb->show();                     /* 非模态:不阻塞收数(否则弹窗>5s 会触发超时判活) */
+            }
+        }
 
         lblLat->setText(QString("纬度: %1").arg(lat, 0, 'f', 6));
         lblLon->setText(QString("经度: %1").arg(lon, 0, 'f', 6));
