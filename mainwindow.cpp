@@ -20,7 +20,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
 
     this->resize(900, 520);
-    this->setWindowTitle("车载监控 v0.9.1·TCP实时");
+    this->setWindowTitle("车载监控 v0.9.2·TCP实时");
 
     tabs = new QTabWidget;
     tabs->addTab(createRealtimePage(), "实时监控");
