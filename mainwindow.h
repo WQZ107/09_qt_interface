@@ -56,5 +56,6 @@ private:
     // ── Day163:TCP 实时通道 ──
     QTcpSocket *tcpSocket;
     bool tcpConnected = false;  /* true=标签/曲线吃 TCP(秒级新鲜);false=回退数据库(分钟级) */
+    qint64 lastTcpMs = 0;       /* v0.9.2: 最近一次收到数据的毫秒时刻(收数超时判活用) */
 };
 #endif // MAINWINDOW_H

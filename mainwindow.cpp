@@ -235,6 +235,13 @@ void MainWindow::initChart()
 // ── 每秒刷新(★Day163 加两行:TCP 在喂时让位)──
 void MainWindow::refreshRealtime()
 {
+    /* v0.9.2: 收数超时判活——断电的板子不会发 disconnected(半开连接),
+       5 秒没数据就 abort 触发重连链,不再假装在线 */
+    if (tcpConnected && lastTcpMs > 0 &&
+        QDateTime::currentMSecsSinceEpoch() - lastTcpMs > 5000) {
+        qDebug() << "[TCP] 5 秒无数据,判定链路已死,强制重连";
+        tcpSocket->abort();      /* abort 会发 disconnected,重连接管交给原有链路 */
+    }
     DbManager::instance().ensureOpen();   /* 照常做:文件被 mv 换过要重开,
                                              checkAlert() 的告警查询也靠这条连接 */
 
@@ -313,6 +320,7 @@ void MainWindow::connectToBoard()
 
     connect(tcpSocket, &QTcpSocket::connected, this, [=](){
         tcpConnected = true;
+        lastTcpMs = QDateTime::currentMSecsSinceEpoch();        /* v0.9.2: 超时计时起点 */
         statusBar()->showMessage("TCP 实时通道已连接(每秒刷新)");
     });
 
@@ -347,6 +355,7 @@ void MainWindow::onTcpData()
     /* canReadLine:凑齐一整行(\n 结尾)才读——JSON 按行切,半行不解析 */
     while (tcpSocket->canReadLine()) {
         QByteArray line = tcpSocket->readLine();
+        lastTcpMs = QDateTime::currentMSecsSinceEpoch();        /* v0.9.2:喂狗 */
         QJsonDocument doc = QJsonDocument::fromJson(line);
         if (!doc.isObject())
             continue;                      /* 坏行丢弃,下一秒会有新行 */
