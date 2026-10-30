@@ -9,6 +9,7 @@
 #include <QDebug>
 #include <QDateEdit>
 #include <QTableWidget>
+#include <QFileInfo>            /* P7: 同步看门狗用 */
 #include <QTcpSocket>           /* ★Day163:TCP 实时通道 */
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -20,7 +21,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
 
     this->resize(900, 520);
-    this->setWindowTitle("车载监控 v0.9.3·TCP实时");
+    this->setWindowTitle("车载监控 v0.9.5·TCP实时");
 
     tabs = new QTabWidget;
     tabs->addTab(createRealtimePage(), "实时监控");
@@ -168,17 +169,17 @@ QWidget* MainWindow::createHistoryPage()
         int row = 0;
         QDateTime tFirst, tLast;
         while (query.next()) {
-                        table->insertRow(row);
+            table->insertRow(row);
             for (int col = 0; col < 12; col++) {
                 QVariant v = query.value(col);
                 QString text;
-                switch (col) {                       // 按列定妆:12 列各有各的精度
-                case 0:  text = v.toString();                          break;  // 时间:原样
-                case 1:  case 2:  text = QString::number(v.toDouble(), 'f', 6); break;  // 经/纬度:6 位
-                case 3:  case 9:  text = QString::number(v.toDouble(), 'f', 0); break;  // 速度/距离:整数
-                case 4:           text = QString::number(v.toDouble(), 'f', 2); break;  // 加速度:2 位
-                case 10: case 11: text = QString::number(v.toInt());            break;  // 卫星/告警:整数
-                default:          text = QString::number(v.toDouble(), 'f', 1); break;  // 温湿度/俯仰横滚:1 位
+                switch (col) {                       /* 按列定妆:12 列各有各的精度 */
+                case 0:  text = v.toString();                          break;  /* 时间:原样 */
+                case 1:  case 2:  text = QString::number(v.toDouble(), 'f', 6); break;  /* 经/纬度:6 位 */
+                case 3:  case 9:  text = QString::number(v.toDouble(), 'f', 0); break;  /* 速度/距离:整数 */
+                case 4:           text = QString::number(v.toDouble(), 'f', 2); break;  /* 加速度:2 位 */
+                case 10: case 11: text = QString::number(v.toInt());            break;  /* 卫星/告警:整数 */
+                default:          text = QString::number(v.toDouble(), 'f', 1); break;  /* 温湿度/俯仰横滚:1 位 */
                 }
                 table->setItem(row, col, new QTableWidgetItem(text));
             }
@@ -232,18 +233,39 @@ void MainWindow::initChart()
     mainLayout->addWidget(chartView);
 }
 
-// ── 每秒刷新(★Day163 加两行:TCP 在喂时让位)──
+// ── 每秒刷新(★Day163 让位;v0.9.2 判活;v0.9.4 同步看门狗)──
 void MainWindow::refreshRealtime()
 {
+    /* P7: 同步看门狗——副本有数据≠数据新鲜;mtime 超 3 分钟没动=start_work.sh 死了 */
+    {
+        static qint64 lastMtime = 0;
+        QFileInfo fi("/home/wu/sync/vehicle.db");
+        qint64 mt  = fi.exists() ? fi.lastModified().toMSecsSinceEpoch() : 0;
+        qint64 age = QDateTime::currentMSecsSinceEpoch() - mt;
+        if (!fi.exists()) {
+            statusBar()->showMessage("⚠ 同步副本不存在——先跑 ~/start_work.sh");
+        } else if (age > 180000) {
+            statusBar()->showMessage(QString("⚠ 同步副本已 %1 秒未更新(start_work.sh 在跑吗?)")
+                                         .arg(age / 1000));
+        } else if (mt != lastMtime) {
+            lastMtime = mt;                                  /* 副本在刷新 */
+            if (statusBar()->currentMessage().startsWith("⚠"))
+                statusBar()->showMessage(tcpConnected
+                                             ? "TCP 实时通道已连接(每秒刷新)"
+                                             : "同步正常(等待板子连接)");
+        }
+    }
+
     /* v0.9.2: 收数超时判活——断电的板子不会发 disconnected(半开连接),
        5 秒没数据就 abort 触发重连链,不再假装在线 */
     if (tcpConnected && lastTcpMs > 0 &&
         QDateTime::currentMSecsSinceEpoch() - lastTcpMs > 5000) {
         qDebug() << "[TCP] 5 秒无数据,判定链路已死,强制重连";
-        tcpSocket->abort();      /* abort 会发 disconnected,重连接管交给原有链路 */
+        tcpSocket->abort();      /* abort 会发 disconnected,重连交给原有链路 */
     }
+
     DbManager::instance().ensureOpen();   /* 照常做:文件被 mv 换过要重开,
-                                             checkAlert() 的告警查询也靠这条连接 */
+                                             checkAlert() 的告警查询也靠它 */
 
     if (tcpConnected)
         return;   /* TCP 在喂(秒级新鲜),库副本旧约 1 分钟,标签/曲线不打架;
@@ -272,7 +294,7 @@ void MainWindow::refreshRealtime()
     tempChart->axisX()->setRange(qMax(0, x_counter - 59), x_counter);
 }
 
-// ── 告警检查(原样)──
+// ── 告警检查(原样;TCP 在线时只记账)──
 void MainWindow::checkAlert()
 {
     static int last_alert_id = 0;
@@ -309,7 +331,7 @@ void MainWindow::checkAlert()
     }
 }
 
-// ── ★Day163 v0.9.1:TCP 实时通道(重连补洞版)──
+// ── ★Day163:TCP 实时通道(重连补洞版)──
 void MainWindow::connectToBoard()
 {
     /* 防双触发闸:disconnected 和 errorOccurred 可能先后都来,
